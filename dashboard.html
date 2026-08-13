@@ -1,0 +1,179 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no">
+  <title>Dashboard // Cyber UNO</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link href="https://fonts.googleapis.com/css2?family=Orbitron:wght@500;700;900&family=Share+Tech+Mono&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="css/style.css">
+  <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
+</head>
+<body>
+  <div class="container">
+    <div class="user-bar" id="userBar">
+      <div class="flex items-center gap-1">
+        <div class="avatar" id="avatar">?</div>
+        <div>
+          <div id="username" style="font-weight:700;">...</div>
+          <div style="font-size:0.7rem;color:var(--text-dim);">ONLINE</div>
+        </div>
+      </div>
+      <button class="btn btn-sm btn-danger" onclick="logout()">LOGOUT</button>
+    </div>
+
+    <div class="logo" style="margin:0.5rem 0 1rem;">
+      <h1 style="font-size:1.8rem;">CYBER UNO</h1>
+    </div>
+
+    <div class="menu-grid">
+      <button class="btn btn-primary" onclick="showPlayOptions()">▶ PLAY</button>
+      <button class="btn" onclick="location.href='room.html?mode=create'">CREATE PRIVATE ROOM</button>
+      <button class="btn" onclick="document.getElementById('joinPanel').classList.toggle('hidden')">JOIN ROOM</button>
+      
+      <div id="joinPanel" class="panel hidden">
+        <div class="form-group">
+          <label>Room Code</label>
+          <input type="text" id="joinCode" placeholder="AB12CD" maxlength="6" style="text-transform:uppercase;letter-spacing:0.2em;text-align:center;font-size:1.3rem;">
+        </div>
+        <button class="btn btn-primary" onclick="joinByCode()">JOIN</button>
+      </div>
+
+      <button class="btn" onclick="showHowTo()">HOW TO PLAY</button>
+      <button class="btn" onclick="showProfile()">PROFILE</button>
+    </div>
+
+    <!-- Play options modal-like -->
+    <div id="playOptions" class="panel mt-2 hidden">
+      <h3 class="neon-text text-center mb-1">SELECT MODE</h3>
+      <div class="menu-grid">
+        <button class="btn btn-primary" onclick="location.href='matchmaking.html'">RANDOM PLAYERS</button>
+        <button class="btn" onclick="startBots()">BOTS</button>
+        <button class="btn" onclick="location.href='room.html?mode=create'">FRIENDS (PRIVATE)</button>
+        <button class="btn btn-sm" onclick="document.getElementById('playOptions').classList.add('hidden')">BACK</button>
+      </div>
+    </div>
+
+    <!-- Bots config -->
+    <div id="botsConfig" class="panel mt-2 hidden">
+      <h3 class="neon-text text-center mb-1">BOT MATCH</h3>
+      <div class="form-group">
+        <label>Players (including you)</label>
+        <select id="botCount">
+          <option value="2">2 Players</option>
+          <option value="4" selected>4 Players</option>
+          <option value="6">6 Players</option>
+        </select>
+      </div>
+      <div class="form-group">
+        <label>Difficulty</label>
+        <select id="botDiff">
+          <option value="easy">Easy</option>
+          <option value="normal" selected>Normal</option>
+          <option value="hard">Hard</option>
+        </select>
+      </div>
+      <button class="btn btn-primary" onclick="launchBots()">START BOT GAME</button>
+      <button class="btn btn-sm mt-1" onclick="document.getElementById('botsConfig').classList.add('hidden')">BACK</button>
+    </div>
+
+    <!-- How to -->
+    <div id="howTo" class="panel mt-2 hidden">
+      <h3 class="neon-text">HOW TO PLAY</h3>
+      <ul style="font-size:0.85rem;line-height:1.6;color:var(--text-dim);padding-left:1.2rem;margin:0.8rem 0;">
+        <li>Match the color or number/value of the top discard card.</li>
+        <li>Action cards: Skip, Reverse, Draw Two.</li>
+        <li>Wild & Wild Draw Four let you change color.</li>
+        <li>When you have 1 card left, press the UNO button!</li>
+        <li>First to empty hand wins.</li>
+      </ul>
+      <button class="btn btn-sm" onclick="document.getElementById('howTo').classList.add('hidden')">CLOSE</button>
+    </div>
+
+    <!-- Profile -->
+    <div id="profilePanel" class="panel mt-2 hidden">
+      <h3 class="neon-text">PROFILE</h3>
+      <div class="form-group mt-1">
+        <label>Change Username</label>
+        <input type="text" id="newUsername" maxlength="20">
+      </div>
+      <button class="btn btn-primary" onclick="changeUsername()">SAVE</button>
+      <button class="btn btn-sm mt-1" onclick="document.getElementById('profilePanel').classList.add('hidden')">CLOSE</button>
+    </div>
+  </div>
+
+  <script src="js/config.js"></script>
+  <script src="js/supabase-client.js"></script>
+  <script src="js/auth.js"></script>
+  <script>
+    let currentUser = null;
+
+    async function init() {
+      currentUser = await requireAuth();
+      if (!currentUser) return;
+      const name = currentUser.profile?.username || 'Player';
+      document.getElementById('username').textContent = name;
+      document.getElementById('avatar').textContent = name[0].toUpperCase();
+      document.getElementById('newUsername').value = name;
+    }
+
+    function showPlayOptions() {
+      document.getElementById('playOptions').classList.remove('hidden');
+      document.getElementById('botsConfig').classList.add('hidden');
+    }
+
+    function startBots() {
+      document.getElementById('playOptions').classList.add('hidden');
+      document.getElementById('botsConfig').classList.remove('hidden');
+    }
+
+    function launchBots() {
+      const count = document.getElementById('botCount').value;
+      const diff = document.getElementById('botDiff').value;
+      location.href = `game.html?mode=bots&players=${count}&diff=${diff}`;
+    }
+
+    function showHowTo() {
+      document.getElementById('howTo').classList.toggle('hidden');
+    }
+
+    function showProfile() {
+      document.getElementById('profilePanel').classList.toggle('hidden');
+    }
+
+    async function changeUsername() {
+      try {
+        await updateUsername(document.getElementById('newUsername').value);
+        showToast('Username updated');
+        init();
+      } catch (e) {
+        showToast(e.message, 'error');
+      }
+    }
+
+    async function joinByCode() {
+      const code = document.getElementById('joinCode').value.trim().toUpperCase();
+      if (code.length < 4) {
+        showToast('Enter a valid code', 'error');
+        return;
+      }
+      try {
+        const { data, error } = await sb.rpc('join_room_by_code', { p_code: code });
+        if (error) throw error;
+        location.href = `room.html?code=${data.room_code}`;
+      } catch (e) {
+        showToast(e.message || 'Could not join room', 'error');
+      }
+    }
+
+    // Handle invitation links: ?join=CODE
+    const params = new URLSearchParams(location.search);
+    if (params.get('join')) {
+      document.getElementById('joinPanel').classList.remove('hidden');
+      document.getElementById('joinCode').value = params.get('join');
+    }
+
+    init();
+  </script>
+</body>
+</html>
