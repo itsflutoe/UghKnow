@@ -1,0 +1,182 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no">
+  <title>Matchmaking // UghKnow</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link href="https://fonts.googleapis.com/css2?family=Orbitron:wght@500;700;900&family=Share+Tech+Mono&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="css/style.css">
+  <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
+</head>
+<body>
+  <div class="container">
+    <div class="logo">
+      <h1 style="font-size:1.6rem;">MATCHMAKING</h1>
+    </div>
+
+    <div id="selectPanel" class="panel">
+      <h3 class="neon-text text-center">FINDING PLAYERS</h3>
+      <p class="text-center" style="color:var(--text-dim);font-size:0.85rem;margin:0.5rem 0 1rem;">Choose room size</p>
+      <div class="menu-grid">
+        <button class="btn" onclick="joinQueue(2)">2 PLAYERS</button>
+        <button class="btn btn-primary" onclick="joinQueue(4)">4 PLAYERS</button>
+        <button class="btn" onclick="joinQueue(6)">6 PLAYERS</button>
+        <button class="btn btn-sm" onclick="location.href='dashboard.html'">CANCEL</button>
+      </div>
+    </div>
+
+    <div id="queuePanel" class="panel hidden">
+      <div class="pulse-ring"></div>
+      <h3 class="neon-text text-center">SEARCHING...</h3>
+      <p class="text-center mt-1" id="queueStatus">Looking for players</p>
+      <p class="text-center" style="font-size:1.4rem;color:var(--yellow);" id="foundCount">0 / ?</p>
+      <div id="foundPlayers" class="player-slots"></div>
+      <button class="btn btn-danger mt-2" onclick="cancelQueue()">CANCEL</button>
+    </div>
+  </div>
+
+  <script src="js/config.js"></script>
+  <script src="js/supabase-client.js"></script>
+  <script src="js/auth.js"></script>
+  <script>
+    let currentUser = null;
+    let queueChannel = null;
+    let maxPlayers = 4;
+    let pollTimer = null;
+    let matching = false;
+
+    async function init() {
+      currentUser = await requireAuth();
+      if (!currentUser) return;
+    }
+
+    async function joinQueue(size) {
+      maxPlayers = size;
+      matching = false;
+      try {
+        await sb.from('matchmaking_queue').delete().eq('user_id', currentUser.user.id);
+
+        const { error } = await sb.from('matchmaking_queue').insert({
+          user_id: currentUser.user.id,
+          max_players: size
+        });
+        if (error) throw error;
+
+        document.getElementById('selectPanel').classList.add('hidden');
+        document.getElementById('queuePanel').classList.remove('hidden');
+        document.getElementById('foundCount').textContent = `1 / ${size}`;
+
+        queueChannel = sb.channel('matchmaking-' + Date.now())
+          .on('postgres_changes', { event: '*', schema: 'public', table: 'matchmaking_queue' }, () => {
+            tryMatch();
+          })
+          .subscribe();
+
+        pollTimer = setInterval(tryMatch, 2000);
+        tryMatch();
+      } catch (e) {
+        showToast(e.message, 'error');
+      }
+    }
+
+    async function tryMatch() {
+      if (matching) return;
+
+      const { data: queue, error } = await sb
+        .from('matchmaking_queue')
+        .select('user_id, joined_at, profiles(username)')
+        .eq('max_players', maxPlayers)
+        .order('joined_at', { ascending: true });
+
+      if (error || !queue || queue.length === 0) return;
+
+      const names = queue.map(q => q.profiles?.username || 'Player');
+      document.getElementById('foundCount').textContent = `${queue.length} / ${maxPlayers}`;
+      document.getElementById('foundPlayers').innerHTML = names.map(n =>
+        `<div class="player-slot filled">
+          <div class="avatar" style="width:32px;height:32px;font-size:0.9rem;">${(n[0]||'?').toUpperCase()}</div>
+          <span>${n}</span>
+        </div>`
+      ).join('');
+
+      if (queue.length >= maxPlayers) {
+        const myIndex = queue.findIndex(q => q.user_id === currentUser.user.id);
+        if (myIndex === -1) return;
+
+        if (queue[0].user_id === currentUser.user.id) {
+          matching = true;
+          await createMatchedRoom(queue.slice(0, maxPlayers));
+        } else {
+          setTimeout(checkForRoom, 1200);
+        }
+      }
+    }
+
+    async function createMatchedRoom(players) {
+      clearInterval(pollTimer);
+      try {
+        const playerIds = players.map(p => p.user_id);
+
+        const { data, error } = await sb.rpc('create_matchmaking_room', {
+          p_max_players: maxPlayers,
+          p_player_ids: playerIds
+        });
+
+        if (error) {
+          console.error(error);
+          matching = false;
+          showToast(error.message || 'Failed to create match', 'error');
+          return;
+        }
+
+        if (queueChannel) sb.removeChannel(queueChannel);
+        location.href = `room.html?code=${data.room_code}&auto=1`;
+      } catch (e) {
+        console.error(e);
+        matching = false;
+        showToast(e.message, 'error');
+      }
+    }
+
+    async function checkForRoom() {
+      if (matching) return;
+
+      const { data } = await sb
+        .from('room_players')
+        .select('room_id, rooms(room_code, status, room_type)')
+        .eq('user_id', currentUser.user.id)
+        .eq('status', 'joined');
+
+      if (data && data.length) {
+        const r = data.find(d =>
+          d.rooms?.room_type === 'matchmaking' &&
+          (d.rooms?.status === 'waiting' || d.rooms?.status === 'playing')
+        );
+        if (r) {
+          matching = true;
+          clearInterval(pollTimer);
+          if (queueChannel) sb.removeChannel(queueChannel);
+          await sb.from('matchmaking_queue').delete().eq('user_id', currentUser.user.id);
+          location.href = `room.html?code=${r.rooms.room_code}&auto=1`;
+        }
+      }
+    }
+
+    async function cancelQueue() {
+      clearInterval(pollTimer);
+      if (queueChannel) sb.removeChannel(queueChannel);
+      await sb.from('matchmaking_queue').delete().eq('user_id', currentUser.user.id);
+      location.href = 'dashboard.html';
+    }
+
+    window.addEventListener('beforeunload', () => {
+      if (currentUser) {
+        sb.from('matchmaking_queue').delete().eq('user_id', currentUser.user.id);
+      }
+    });
+
+    init();
+  </script>
+</body>
+</html>
