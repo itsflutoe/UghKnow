@@ -1,0 +1,344 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no">
+  <title>Admin // UghKnow</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link href="https://fonts.googleapis.com/css2?family=Orbitron:wght@500;700;900&family=Share+Tech+Mono&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="css/style.css">
+  <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
+  <style>
+    .admin-grid { display: grid; gap: 1rem; }
+    @media (min-width: 700px) {
+      .admin-grid { grid-template-columns: 1fr 1fr; }
+    }
+    .stat-box {
+      background: rgba(0,0,0,0.35);
+      border: 1px solid var(--border);
+      border-radius: 10px;
+      padding: 1rem;
+      text-align: center;
+    }
+    .stat-box .num {
+      font-size: 1.8rem;
+      font-weight: 700;
+      color: var(--cyan);
+    }
+    .stat-box .label {
+      font-size: 0.7rem;
+      color: var(--text-dim);
+      letter-spacing: 0.1em;
+      margin-top: 0.25rem;
+    }
+    table {
+      width: 100%;
+      border-collapse: collapse;
+      font-size: 0.8rem;
+    }
+    th, td {
+      padding: 0.5rem 0.4rem;
+      text-align: left;
+      border-bottom: 1px solid rgba(255,255,255,0.06);
+    }
+    th { color: var(--text-dim); font-weight: 500; letter-spacing: 0.05em; }
+    .badge {
+      display: inline-block;
+      padding: 0.15rem 0.4rem;
+      border-radius: 4px;
+      font-size: 0.65rem;
+      font-weight: 700;
+    }
+    .badge-green { background: rgba(0,255,159,0.15); color: var(--green); }
+    .badge-red { background: rgba(255,42,109,0.15); color: var(--red); }
+    .badge-yellow { background: rgba(252,238,10,0.15); color: var(--yellow); }
+    .badge-cyan { background: rgba(0,245,255,0.15); color: var(--cyan); }
+    .scroll-box {
+      max-height: 280px;
+      overflow-y: auto;
+    }
+  </style>
+</head>
+<body>
+  <div class="container" style="max-width:900px;">
+    <div class="user-bar">
+      <div>
+        <div style="font-weight:700;color:var(--magenta);">ADMIN PANEL</div>
+        <div style="font-size:0.7rem;color:var(--text-dim);" id="adminName">...</div>
+      </div>
+      <button class="btn btn-sm" onclick="location.href='dashboard.html'">BACK</button>
+    </div>
+
+    <!-- Stats -->
+    <div class="flex" style="gap:0.6rem;margin-bottom:1rem;flex-wrap:wrap;">
+      <div class="stat-box" style="flex:1;min-width:90px;">
+        <div class="num" id="statUsers">-</div>
+        <div class="label">USERS</div>
+      </div>
+      <div class="stat-box" style="flex:1;min-width:90px;">
+        <div class="num" id="statRooms">-</div>
+        <div class="label">ROOMS</div>
+      </div>
+      <div class="stat-box" style="flex:1;min-width:90px;">
+        <div class="num" id="statGames">-</div>
+        <div class="label">ACTIVE GAMES</div>
+      </div>
+      <div class="stat-box" style="flex:1;min-width:90px;">
+        <div class="num" id="statQueue">-</div>
+        <div class="label">IN QUEUE</div>
+      </div>
+    </div>
+
+    <div class="admin-grid">
+      <!-- Users -->
+      <div class="panel">
+        <h3 class="neon-text" style="font-size:0.95rem;margin-bottom:0.75rem;">PLAYERS</h3>
+        <div class="scroll-box">
+          <table>
+            <thead>
+              <tr>
+                <th>USER</th>
+                <th>W</th>
+                <th>L</th>
+                <th></th>
+              </tr>
+            </thead>
+            <tbody id="usersTable"></tbody>
+          </table>
+        </div>
+      </div>
+
+      <!-- Rooms -->
+      <div class="panel">
+        <h3 class="neon-text" style="font-size:0.95rem;margin-bottom:0.75rem;">ROOMS</h3>
+        <div class="scroll-box">
+          <table>
+            <thead>
+              <tr>
+                <th>CODE</th>
+                <th>TYPE</th>
+                <th>STATUS</th>
+                <th></th>
+              </tr>
+            </thead>
+            <tbody id="roomsTable"></tbody>
+          </table>
+        </div>
+      </div>
+
+      <!-- Active Games -->
+      <div class="panel">
+        <h3 class="neon-text" style="font-size:0.95rem;margin-bottom:0.75rem;">ACTIVE GAMES</h3>
+        <div class="scroll-box">
+          <table>
+            <thead>
+              <tr>
+                <th>ID</th>
+                <th>SEAT</th>
+                <th>STATUS</th>
+                <th></th>
+              </tr>
+            </thead>
+            <tbody id="gamesTable"></tbody>
+          </table>
+        </div>
+      </div>
+
+      <!-- Queue + Actions -->
+      <div class="panel">
+        <h3 class="neon-text" style="font-size:0.95rem;margin-bottom:0.75rem;">QUICK ACTIONS</h3>
+        <div class="menu-grid">
+          <button class="btn btn-sm" onclick="refreshAll()">REFRESH DATA</button>
+          <button class="btn btn-sm btn-danger" onclick="clearQueue()">CLEAR MATCHMAKING QUEUE</button>
+          <button class="btn btn-sm btn-danger" onclick="endAllWaitingRooms()">CLOSE WAITING ROOMS</button>
+        </div>
+
+        <h4 style="font-size:0.8rem;color:var(--text-dim);margin:1.2rem 0 0.5rem;">MATCHMAKING QUEUE</h4>
+        <div id="queueList" style="font-size:0.8rem;color:var(--text-dim);"></div>
+      </div>
+    </div>
+  </div>
+
+  <script src="js/config.js"></script>
+  <script src="js/supabase-client.js"></script>
+  <script src="js/auth.js"></script>
+  <script>
+    let currentUser = null;
+
+    async function init() {
+      currentUser = await requireAuth();
+      if (!currentUser) return;
+
+      // Check admin
+      if (!currentUser.profile?.is_admin) {
+        showToast('Access denied', 'error');
+        setTimeout(() => location.href = 'dashboard.html', 1200);
+        return;
+      }
+
+      document.getElementById('adminName').textContent = currentUser.profile.username + ' (admin)';
+      await refreshAll();
+    }
+
+    async function refreshAll() {
+      await Promise.all([
+        loadStats(),
+        loadUsers(),
+        loadRooms(),
+        loadGames(),
+        loadQueue()
+      ]);
+      showToast('Data refreshed');
+    }
+
+    async function loadStats() {
+      const [users, rooms, games, queue] = await Promise.all([
+        sb.from('profiles').select('id', { count: 'exact', head: true }),
+        sb.from('rooms').select('id', { count: 'exact', head: true }).in('status', ['waiting', 'playing']),
+        sb.from('games').select('id', { count: 'exact', head: true }).eq('status', 'active'),
+        sb.from('matchmaking_queue').select('id', { count: 'exact', head: true })
+      ]);
+      document.getElementById('statUsers').textContent = users.count ?? 0;
+      document.getElementById('statRooms').textContent = rooms.count ?? 0;
+      document.getElementById('statGames').textContent = games.count ?? 0;
+      document.getElementById('statQueue').textContent = queue.count ?? 0;
+    }
+
+    async function loadUsers() {
+      const { data } = await sb
+        .from('profiles')
+        .select('id, username, wins, losses, is_admin, created_at')
+        .order('created_at', { ascending: false })
+        .limit(50);
+
+      const tbody = document.getElementById('usersTable');
+      tbody.innerHTML = (data || []).map(u => `
+        <tr>
+          <td>
+            ${u.username || '?'}
+            ${u.is_admin ? '<span class="badge badge-magenta" style="background:rgba(255,0,170,0.2);color:var(--magenta);">ADMIN</span>' : ''}
+          </td>
+          <td style="color:var(--green)">${u.wins || 0}</td>
+          <td style="color:var(--red)">${u.losses || 0}</td>
+          <td>
+            ${!u.is_admin ? `<button class="btn btn-sm" style="padding:0.2rem 0.4rem;font-size:0.65rem;min-height:auto;width:auto;" onclick="makeAdmin('${u.id}')">Make Admin</button>` : ''}
+          </td>
+        </tr>
+      `).join('') || '<tr><td colspan="4">No users</td></tr>';
+    }
+
+    async function loadRooms() {
+      const { data } = await sb
+        .from('rooms')
+        .select('id, room_code, room_type, status, max_players, created_at')
+        .order('created_at', { ascending: false })
+        .limit(30);
+
+      const tbody = document.getElementById('roomsTable');
+      tbody.innerHTML = (data || []).map(r => {
+        const statusBadge =
+          r.status === 'playing' ? 'badge-green' :
+          r.status === 'waiting' ? 'badge-yellow' : 'badge-red';
+        return `
+          <tr>
+            <td style="font-family:var(--font-mono);letter-spacing:0.1em;">${r.room_code}</td>
+            <td>${r.room_type}</td>
+            <td><span class="badge ${statusBadge}">${r.status}</span></td>
+            <td>
+              ${r.status !== 'finished' && r.status !== 'cancelled' ? 
+                `<button class="btn btn-sm btn-danger" style="padding:0.2rem 0.4rem;font-size:0.65rem;min-height:auto;width:auto;" onclick="closeRoom('${r.id}')">Close</button>` 
+                : ''}
+            </td>
+          </tr>
+        `;
+      }).join('') || '<tr><td colspan="4">No rooms</td></tr>';
+    }
+
+    async function loadGames() {
+      const { data } = await sb
+        .from('games')
+        .select('id, status, current_seat, winner_seat, created_at')
+        .eq('status', 'active')
+        .order('created_at', { ascending: false })
+        .limit(20);
+
+      const tbody = document.getElementById('gamesTable');
+      tbody.innerHTML = (data || []).map(g => `
+        <tr>
+          <td style="font-size:0.7rem;">${g.id.slice(0,8)}…</td>
+          <td>${g.current_seat}</td>
+          <td><span class="badge badge-green">${g.status}</span></td>
+          <td>
+            <button class="btn btn-sm btn-danger" style="padding:0.2rem 0.4rem;font-size:0.65rem;min-height:auto;width:auto;" onclick="forceEndGame('${g.id}')">Force End</button>
+          </td>
+        </tr>
+      `).join('') || '<tr><td colspan="4">No active games</td></tr>';
+    }
+
+    async function loadQueue() {
+      const { data } = await sb
+        .from('matchmaking_queue')
+        .select('user_id, max_players, joined_at, profiles(username)')
+        .order('joined_at', { ascending: true });
+
+      const el = document.getElementById('queueList');
+      if (!data || data.length === 0) {
+        el.textContent = 'Queue is empty';
+        return;
+      }
+      el.innerHTML = data.map(q =>
+        `<div style="padding:0.3rem 0;border-bottom:1px solid rgba(255,255,255,0.05);">
+          ${q.profiles?.username || 'Player'} — looking for ${q.max_players}p
+        </div>`
+      ).join('');
+    }
+
+    async function makeAdmin(userId) {
+      if (!confirm('Make this user an admin?')) return;
+      const { error } = await sb.from('profiles').update({ is_admin: true }).eq('id', userId);
+      if (error) showToast(error.message, 'error');
+      else {
+        showToast('User is now admin');
+        loadUsers();
+      }
+    }
+
+    async function closeRoom(roomId) {
+      if (!confirm('Close this room?')) return;
+      await sb.from('rooms').update({ status: 'cancelled' }).eq('id', roomId);
+      showToast('Room closed');
+      loadRooms();
+      loadStats();
+    }
+
+    async function forceEndGame(gameId) {
+      if (!confirm('Force end this game?')) return;
+      await sb.from('games').update({
+        status: 'finished',
+        updated_at: new Date().toISOString()
+      }).eq('id', gameId);
+      showToast('Game ended');
+      loadGames();
+      loadStats();
+    }
+
+    async function clearQueue() {
+      if (!confirm('Clear the entire matchmaking queue?')) return;
+      await sb.from('matchmaking_queue').delete().neq('id', '00000000-0000-0000-0000-000000000000');
+      showToast('Queue cleared');
+      loadQueue();
+      loadStats();
+    }
+
+    async function endAllWaitingRooms() {
+      if (!confirm('Close all waiting rooms?')) return;
+      await sb.from('rooms').update({ status: 'cancelled' }).eq('status', 'waiting');
+      showToast('Waiting rooms closed');
+      loadRooms();
+      loadStats();
+    }
+
+    init();
+  </script>
+</body>
+</html>
