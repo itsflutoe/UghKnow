@@ -1,0 +1,171 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no">
+  <title>Leaderboard // UghKnow</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link href="https://fonts.googleapis.com/css2?family=Orbitron:wght@500;700;900&family=Share+Tech+Mono&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="css/style.css">
+  <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
+  <style>
+    .lb-row {
+      display: flex;
+      align-items: center;
+      gap: 0.75rem;
+      padding: 0.7rem 0.9rem;
+      background: rgba(0,0,0,0.3);
+      border: 1px solid rgba(0,245,255,0.15);
+      border-radius: 10px;
+      margin-bottom: 0.5rem;
+      transition: border-color 0.2s;
+    }
+    .lb-row:hover { border-color: var(--cyan); }
+    .lb-row.me {
+      border-color: var(--magenta);
+      box-shadow: 0 0 12px rgba(255,0,170,0.2);
+    }
+    .rank {
+      width: 32px;
+      height: 32px;
+      border-radius: 50%;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      font-weight: 700;
+      font-size: 0.85rem;
+      flex-shrink: 0;
+    }
+    .rank-1 { background: linear-gradient(135deg, #fcee0a, #d4af37); color: #000; }
+    .rank-2 { background: linear-gradient(135deg, #c0c0c0, #888); color: #000; }
+    .rank-3 { background: linear-gradient(135deg, #cd7f32, #8b4513); color: #fff; }
+    .rank-other { background: rgba(0,245,255,0.1); color: var(--cyan); }
+    .lb-name {
+      flex: 1;
+      font-weight: 600;
+      overflow: hidden;
+      text-overflow: ellipsis;
+      white-space: nowrap;
+    }
+    .lb-stats {
+      text-align: right;
+      font-size: 0.8rem;
+      line-height: 1.3;
+    }
+    .tabs {
+      display: flex;
+      gap: 0.4rem;
+      margin-bottom: 1rem;
+    }
+    .tab {
+      flex: 1;
+      padding: 0.6rem;
+      text-align: center;
+      border: 1px solid var(--border);
+      border-radius: 8px;
+      background: transparent;
+      color: var(--text-dim);
+      font-family: var(--font);
+      font-size: 0.75rem;
+      letter-spacing: 0.05em;
+      cursor: pointer;
+    }
+    .tab.active {
+      border-color: var(--cyan);
+      color: var(--cyan);
+      background: rgba(0,245,255,0.08);
+    }
+  </style>
+</head>
+<body>
+  <div class="container">
+    <div class="user-bar">
+      <div style="font-weight:700;">LEADERBOARD</div>
+      <button class="btn btn-sm" onclick="location.href='dashboard.html'">BACK</button>
+    </div>
+
+    <div class="tabs">
+      <button class="tab active" id="tabWins" onclick="loadLeaderboard('wins')">MOST WINS</button>
+      <button class="tab" id="tabRate" onclick="loadLeaderboard('rate')">WIN RATE</button>
+    </div>
+
+    <div id="list"></div>
+    <p id="empty" class="text-center hidden" style="color:var(--text-dim);margin-top:2rem;">No players yet</p>
+  </div>
+
+  <script src="js/config.js"></script>
+  <script src="js/supabase-client.js"></script>
+  <script src="js/auth.js"></script>
+  <script>
+    let currentUser = null;
+    let mode = 'wins';
+
+    async function init() {
+      currentUser = await requireAuth();
+      if (!currentUser) return;
+      loadLeaderboard('wins');
+    }
+
+    async function loadLeaderboard(type) {
+      mode = type;
+      document.getElementById('tabWins').classList.toggle('active', type === 'wins');
+      document.getElementById('tabRate').classList.toggle('active', type === 'rate');
+
+      const { data, error } = await sb
+        .from('profiles')
+        .select('id, username, wins, losses')
+        .order('wins', { ascending: false })
+        .limit(50);
+
+      if (error) {
+        showToast(error.message, 'error');
+        return;
+      }
+
+      let players = data || [];
+
+      // Filter out people with 0 games for rate view
+      if (type === 'rate') {
+        players = players
+          .filter(p => (p.wins || 0) + (p.losses || 0) >= 1)
+          .map(p => ({
+            ...p,
+            rate: (p.wins || 0) / ((p.wins || 0) + (p.losses || 0))
+          }))
+          .sort((a, b) => b.rate - a.rate || b.wins - a.wins);
+      }
+
+      const list = document.getElementById('list');
+      const empty = document.getElementById('empty');
+
+      if (players.length === 0) {
+        list.innerHTML = '';
+        empty.classList.remove('hidden');
+        return;
+      }
+      empty.classList.add('hidden');
+
+      list.innerHTML = players.map((p, i) => {
+        const rank = i + 1;
+        const rankClass = rank === 1 ? 'rank-1' : rank === 2 ? 'rank-2' : rank === 3 ? 'rank-3' : 'rank-other';
+        const isMe = currentUser && p.id === currentUser.user.id;
+        const total = (p.wins || 0) + (p.losses || 0);
+        const rate = total > 0 ? Math.round(((p.wins || 0) / total) * 100) : 0;
+
+        return `
+          <div class="lb-row ${isMe ? 'me' : ''}">
+            <div class="rank ${rankClass}">${rank}</div>
+            <div class="lb-name">${p.username || 'Player'}${isMe ? ' (you)' : ''}</div>
+            <div class="lb-stats">
+              <div style="color:var(--green);">${p.wins || 0}W</div>
+              <div style="color:var(--text-dim);">${p.losses || 0}L · ${rate}%</div>
+            </div>
+          </div>
+        `;
+      }).join('');
+    }
+
+    init();
+  </script>
+</body>
+</html>
