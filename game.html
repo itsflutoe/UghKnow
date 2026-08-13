@@ -1,0 +1,533 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no">
+  <title>UghKnow // Game</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link href="https://fonts.googleapis.com/css2?family=Orbitron:wght@500;700;900&family=Share+Tech+Mono&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="css/style.css">
+  <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
+</head>
+<body>
+  <div class="game-wrapper">
+    <div class="game-table" id="gameTable">
+      <div class="opponents" id="opponents"></div>
+
+      <div class="center-area">
+        <div class="pile draw-pile" id="drawPile" onclick="onDraw()">DRAW</div>
+        <div>
+          <div class="pile discard-pile" id="discardPile"></div>
+          <div class="text-center mt-1">
+            <div class="color-indicator" id="colorInd" style="margin:0 auto;"></div>
+          </div>
+        </div>
+      </div>
+
+      <div id="turnInfo" class="text-center" style="font-size:0.8rem;color:var(--text-dim);">Waiting...</div>
+      <div id="pendingInfo" class="text-center" style="font-size:0.75rem;color:var(--magenta);"></div>
+
+      <div class="hand" id="hand"></div>
+    </div>
+
+    <div class="action-bar">
+      <button class="btn btn-sm" onclick="location.href='dashboard.html'">MENU</button>
+    </div>
+
+    <button class="uno-btn" id="unoBtn" onclick="callUno()">UNO!</button>
+  </div>
+
+  <div id="colorPicker" class="victory-overlay hidden">
+    <div class="victory-box">
+      <h3 class="neon-text">CHOOSE COLOR</h3>
+      <div class="flex" style="justify-content:center;gap:0.8rem;margin-top:1.2rem;">
+        <button class="btn" style="background:#ff2a6d;border:none;width:60px;height:60px;" onclick="chooseColor('red')"></button>
+        <button class="btn" style="background:#00b4ff;border:none;width:60px;height:60px;" onclick="chooseColor('blue')"></button>
+        <button class="btn" style="background:#00ff9f;border:none;width:60px;height:60px;" onclick="chooseColor('green')"></button>
+        <button class="btn" style="background:#fcee0a;border:none;width:60px;height:60px;" onclick="chooseColor('yellow')"></button>
+      </div>
+    </div>
+  </div>
+
+  <div id="victory" class="victory-overlay hidden">
+    <div class="victory-box">
+      <h2>VICTORY</h2>
+      <p id="winnerName" class="neon-text" style="font-size:1.4rem;margin:0.5rem 0;"></p>
+      <p style="color:var(--text-dim);">HAS WON THE GAME</p>
+      <div class="menu-grid mt-2">
+        <button class="btn btn-primary" onclick="location.href='dashboard.html'">MAIN MENU</button>
+      </div>
+    </div>
+  </div>
+
+  <script src="js/config.js"></script>
+  <script src="js/supabase-client.js"></script>
+  <script src="js/auth.js"></script>
+  <script src="js/uno-engine.js"></script>
+  <script src="js/bots.js"></script>
+  <script>
+    let currentUser = null;
+    let gameId = null;
+    let roomId = null;
+    let state = null;
+    let mySeat = null;
+    let channel = null;
+    let isBotGame = false;
+    let pendingWildCard = null;
+    let botTimer = null;
+    let isProcessing = false;
+
+    const params = new URLSearchParams(location.search);
+
+    async function init() {
+      currentUser = await requireAuth();
+      if (!currentUser) return;
+
+      if (params.get('mode') === 'bots') {
+        isBotGame = true;
+        startBotGame();
+        return;
+      }
+
+      gameId = params.get('game');
+      roomId = params.get('room');
+      if (!gameId) {
+        showToast('No game', 'error');
+        return;
+      }
+      await loadGame();
+      subscribeGame();
+    }
+
+    async function startBotGame() {
+      const count = parseInt(params.get('players') || '4');
+      const diff = params.get('diff') || 'normal';
+      const botNames = ['NOVA', 'BYTE', 'GLITCH', 'CIRCUIT', 'PIXEL'];
+
+      const configs = [{
+        seat: 0,
+        userId: currentUser.user.id,
+        username: currentUser.profile?.username || 'You',
+        isBot: false
+      }];
+
+      for (let i = 1; i < count; i++) {
+        configs.push({
+          seat: i,
+          userId: null,
+          isBot: true,
+          botName: botNames[i - 1],
+          botDifficulty: diff,
+          username: botNames[i - 1]
+        });
+      }
+
+      state = UnoEngine.createInitialState(configs, {
+        stackDraw: true,
+        allowDrawWithPlayable: true,
+        startingHandSize: 7
+      });
+      mySeat = 0;
+      render();
+      maybeBotTurn();
+    }
+
+    async function loadGame() {
+      const { data: game, error } = await sb.from('games').select('*').eq('id', gameId).single();
+      if (error || !game) {
+        showToast('Game not found', 'error');
+        return;
+      }
+
+      const { data: gps } = await sb.from('game_players').select('*').eq('game_id', gameId).order('seat');
+
+      state = {
+        players: (gps || []).map(gp => ({
+          seat: gp.seat,
+          userId: gp.user_id,
+          username: gp.bot_name || 'Player',
+          isBot: gp.is_bot,
+          botName: gp.bot_name,
+          botDifficulty: gp.bot_difficulty,
+          hand: gp.hand || [],
+          cardCount: gp.card_count,
+          unoCalled: gp.uno_called
+        })),
+        drawPile: game.draw_pile || [],
+        discardPile: game.discard_pile || [],
+        currentColor: game.current_color,
+        currentSeat: game.current_seat,
+        direction: game.direction || 1,
+        pendingDraw: game.pending_draw || 0,
+        status: game.status,
+        rules: game.rules || { stackDraw: true },
+        lastAction: game.last_action,
+        winnerSeat: game.winner_seat
+      };
+
+      for (const p of state.players) {
+        if (p.userId && !p.isBot) {
+          const { data: prof } = await sb.from('profiles').select('username').eq('id', p.userId).single();
+          if (prof) p.username = prof.username;
+        }
+      }
+
+      mySeat = state.players.find(p => p.userId === currentUser.user.id)?.seat;
+      if (mySeat === undefined) mySeat = 0;
+
+      render();
+      if (game.status === 'finished') showVictory();
+    }
+
+    function subscribeGame() {
+      channel = sb.channel(`game:${gameId}`)
+        .on('postgres_changes', {
+          event: 'UPDATE',
+          schema: 'public',
+          table: 'games',
+          filter: `id=eq.${gameId}`
+        }, payload => {
+          const g = payload.new;
+          state.currentSeat = g.current_seat;
+          state.currentColor = g.current_color;
+          state.direction = g.direction;
+          state.discardPile = g.discard_pile || state.discardPile;
+          state.drawPile = g.draw_pile || state.drawPile;
+          state.pendingDraw = g.pending_draw || 0;
+          state.status = g.status;
+          state.lastAction = g.last_action;
+          state.winnerSeat = g.winner_seat;
+          if (g.status === 'finished') showVictory();
+          render();
+        })
+        .on('postgres_changes', {
+          event: '*',
+          schema: 'public',
+          table: 'game_players',
+          filter: `game_id=eq.${gameId}`
+        }, async () => {
+          const { data: gps } = await sb.from('game_players').select('*').eq('game_id', gameId);
+          if (!gps) return;
+          for (const gp of gps) {
+            const p = state.players.find(x => x.seat === gp.seat);
+            if (p) {
+              p.hand = gp.hand || [];
+              p.cardCount = gp.card_count;
+              p.unoCalled = gp.uno_called;
+            }
+          }
+          render();
+        })
+        .subscribe();
+    }
+
+    function render() {
+      if (!state) return;
+
+      // Opponents show CARD BACKS only
+      const oppEl = document.getElementById('opponents');
+      oppEl.innerHTML = state.players
+        .filter(p => p.seat !== mySeat)
+        .map(p => {
+          const count = p.cardCount || (p.hand ? p.hand.length : 0);
+          const backs = Array.from({ length: Math.min(count, 12) }, () =>
+            '<div class="card-back"></div>'
+          ).join('');
+          return `
+            <div class="opponent ${p.seat === state.currentSeat ? 'active-turn' : ''}">
+              <div class="name">${p.username}${p.unoCalled ? ' UNO!' : ''}</div>
+              <div class="opponent-cards">${backs}</div>
+              <div style="font-size:0.65rem;color:var(--text-dim);margin-top:2px;">${count}</div>
+            </div>`;
+        }).join('');
+
+      const top = state.discardPile[state.discardPile.length - 1];
+      const disc = document.getElementById('discardPile');
+      if (top) {
+        disc.className = `pile discard-pile ${top.color || 'wild'}`;
+        disc.innerHTML = `<span class="value">${formatValue(top)}</span>`;
+        disc.style.borderColor = top.color ? `var(--${top.color === 'yellow' ? 'yellow' : top.color})` : 'var(--purple)';
+        disc.style.color = (top.color === 'yellow' || top.color === 'green') ? '#000' : '#fff';
+      }
+
+      const ind = document.getElementById('colorInd');
+      ind.style.background = state.currentColor || '#888';
+
+      const cur = state.players.find(p => p.seat === state.currentSeat);
+      document.getElementById('turnInfo').textContent =
+        state.currentSeat === mySeat ? 'YOUR TURN' : `${cur?.username || 'Player'}'s turn`;
+
+      const pend = document.getElementById('pendingInfo');
+      pend.textContent = state.pendingDraw > 0 ? `+${state.pendingDraw} pending` : '';
+
+      const handEl = document.getElementById('hand');
+      const me = state.players.find(p => p.seat === mySeat);
+      if (!me) return;
+
+      const playable = (state.currentSeat === mySeat && state.status === 'active')
+        ? UnoEngine.getPlayableCards(me.hand || [], top, state.currentColor)
+        : [];
+
+      handEl.innerHTML = (me.hand || []).map(c => {
+        const can = playable.some(p => p.id === c.id);
+        return `<div class="card ${c.color || c.value} ${can ? 'playable' : ''}"
+                    onclick="playCard('${c.id}')">
+                  <span class="value">${formatValue(c)}</span>
+                </div>`;
+      }).join('');
+
+      const unoBtn = document.getElementById('unoBtn');
+      if (me.hand && me.hand.length === 1 && !me.unoCalled) {
+        unoBtn.classList.add('show');
+      } else {
+        unoBtn.classList.remove('show');
+      }
+    }
+
+    function formatValue(c) {
+      if (!c) return '';
+      if (c.value === 'draw2') return '+2';
+      if (c.value === 'wild4') return '+4';
+      if (c.value === 'skip') return '⊘';
+      if (c.value === 'reverse') return '⇄';
+      if (c.value === 'wild') return 'W';
+      return c.value;
+    }
+
+    async function playCard(cardId) {
+      if (isProcessing || state.currentSeat !== mySeat || state.status !== 'active') return;
+      const me = state.players.find(p => p.seat === mySeat);
+      const card = (me.hand || []).find(c => c.id === cardId);
+      if (!card) return;
+
+      const top = state.discardPile[state.discardPile.length - 1];
+      if (!UnoEngine.isPlayable(card, top, state.currentColor)) {
+        showToast('Cannot play that card', 'error');
+        return;
+      }
+
+      if (state.pendingDraw > 0) {
+        const canStack = state.rules.stackDraw &&
+          ((card.value === 'draw2' && top.value === 'draw2') || card.value === 'wild4');
+        if (!canStack) {
+          showToast(`You must draw ${state.pendingDraw} cards`, 'error');
+          return;
+        }
+      }
+
+      if (card.type === 'wild') {
+        pendingWildCard = card;
+        document.getElementById('colorPicker').classList.remove('hidden');
+        return;
+      }
+
+      await executePlay(card, null);
+    }
+
+    function chooseColor(color) {
+      document.getElementById('colorPicker').classList.add('hidden');
+      if (pendingWildCard) {
+        executePlay(pendingWildCard, color);
+        pendingWildCard = null;
+      }
+    }
+
+    async function executePlay(card, color) {
+      if (isProcessing) return;
+      isProcessing = true;
+
+      try {
+        let next = JSON.parse(JSON.stringify(state));
+        const me = next.players.find(p => p.seat === mySeat);
+        me.hand = me.hand.filter(c => c.id !== card.id);
+        me.cardCount = me.hand.length;
+        if (me.hand.length === 1) me.unoCalled = false;
+
+        next = UnoEngine.applyCardEffect(card, next, color);
+
+        // Restore the modified hand after deep clone inside apply
+        const me2 = next.players.find(p => p.seat === mySeat);
+        me2.hand = me.hand;
+        me2.cardCount = me.cardCount;
+        me2.unoCalled = me.unoCalled;
+
+        if (me2.cardCount === 0) {
+          next.status = 'finished';
+          next.winnerSeat = mySeat;
+        }
+
+        state = next;
+        render();
+
+        if (isBotGame) {
+          if (next.status === 'finished') {
+            showVictory();
+            return;
+          }
+          isProcessing = false;
+          maybeBotTurn();
+          return;
+        }
+
+        await sb.from('games').update({
+          current_seat: state.currentSeat,
+          current_color: state.currentColor,
+          direction: state.direction,
+          discard_pile: state.discardPile,
+          draw_pile: state.drawPile,
+          pending_draw: state.pendingDraw || 0,
+          last_action: { type: 'play', card, seat: mySeat, color },
+          status: state.status,
+          winner_seat: state.winnerSeat,
+          updated_at: new Date().toISOString()
+        }).eq('id', gameId);
+
+        for (const p of state.players) {
+          const payload = { card_count: p.cardCount, uno_called: p.unoCalled };
+          if (p.seat === mySeat) payload.hand = p.hand;
+          await sb.from('game_players').update(payload)
+            .eq('game_id', gameId).eq('seat', p.seat);
+        }
+
+        if (state.status === 'finished') showVictory();
+      } catch (e) {
+        console.error(e);
+        showToast('Play failed', 'error');
+      } finally {
+        isProcessing = false;
+      }
+    }
+
+    async function onDraw() {
+      if (isProcessing || state.currentSeat !== mySeat || state.status !== 'active') return;
+      isProcessing = true;
+
+      try {
+        if (state.pendingDraw > 0) {
+          let next = UnoEngine.drawCards(state, mySeat, state.pendingDraw);
+          next.pendingDraw = 0;
+          const n = next.players.length;
+          next.currentSeat = (mySeat + next.direction + n) % n;
+          state = next;
+          render();
+          if (isBotGame) {
+            isProcessing = false;
+            maybeBotTurn();
+            return;
+          }
+          await saveFullState();
+          isProcessing = false;
+          return;
+        }
+
+        const me = state.players.find(p => p.seat === mySeat);
+        const top = state.discardPile[state.discardPile.length - 1];
+        const playable = UnoEngine.getPlayableCards(me.hand || [], top, state.currentColor);
+
+        if (playable.length && state.rules.allowDrawWithPlayable === false) {
+          showToast('You have a playable card', 'error');
+          isProcessing = false;
+          return;
+        }
+
+        let next = UnoEngine.drawCards(state, mySeat, 1);
+        const n = next.players.length;
+        next.currentSeat = (mySeat + next.direction + n) % n;
+        state = next;
+        render();
+
+        if (isBotGame) {
+          isProcessing = false;
+          maybeBotTurn();
+          return;
+        }
+        await saveFullState();
+      } catch (e) {
+        console.error(e);
+        showToast('Draw failed', 'error');
+      } finally {
+        isProcessing = false;
+      }
+    }
+
+    async function saveFullState() {
+      await sb.from('games').update({
+        current_seat: state.currentSeat,
+        current_color: state.currentColor,
+        direction: state.direction,
+        discard_pile: state.discardPile,
+        draw_pile: state.drawPile,
+        pending_draw: state.pendingDraw || 0,
+        last_action: state.lastAction,
+        status: state.status,
+        winner_seat: state.winnerSeat,
+        updated_at: new Date().toISOString()
+      }).eq('id', gameId);
+
+      for (const p of state.players) {
+        const payload = { card_count: p.cardCount, uno_called: p.unoCalled };
+        if (p.seat === mySeat || p.isBot) payload.hand = p.hand;
+        await sb.from('game_players').update(payload)
+          .eq('game_id', gameId).eq('seat', p.seat);
+      }
+    }
+
+    async function callUno() {
+      const me = state.players.find(p => p.seat === mySeat);
+      if (!me || !me.hand || me.hand.length !== 1) return;
+      me.unoCalled = true;
+      document.getElementById('unoBtn').classList.remove('show');
+      showToast(me.username + ' called UNO!');
+      render();
+      if (!isBotGame) {
+        await sb.from('game_players').update({ uno_called: true })
+          .eq('game_id', gameId).eq('seat', mySeat);
+      }
+    }
+
+    function maybeBotTurn() {
+      clearTimeout(botTimer);
+      if (!state || state.status !== 'active') return;
+      const cur = state.players.find(p => p.seat === state.currentSeat);
+      if (!cur || !cur.isBot) return;
+
+      botTimer = setTimeout(() => {
+        if (state.pendingDraw > 0) {
+          let next = UnoEngine.drawCards(state, state.currentSeat, state.pendingDraw);
+          next.pendingDraw = 0;
+          const n = next.players.length;
+          next.currentSeat = (state.currentSeat + next.direction + n) % n;
+          state = next;
+          render();
+          maybeBotTurn();
+          return;
+        }
+
+        const next = BotAI.runBotTurn(state, state.currentSeat);
+        if (next) {
+          next.players.forEach(p => { p.cardCount = p.hand ? p.hand.length : 0; });
+          state = next;
+          const win = UnoEngine.checkWinner(state);
+          if (win !== null) {
+            state.status = 'finished';
+            state.winnerSeat = win;
+            render();
+            showVictory();
+            return;
+          }
+          render();
+          maybeBotTurn();
+        }
+      }, 600 + Math.random() * 700);
+    }
+
+    function showVictory() {
+      const winner = state.players.find(p => p.seat === state.winnerSeat);
+      document.getElementById('winnerName').textContent = winner?.username || 'Someone';
+      document.getElementById('victory').classList.remove('hidden');
+    }
+
+    init();
+  </script>
+</body>
+</html>
